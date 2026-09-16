@@ -7,3 +7,4 @@ edition = "2021"
 fuser = "0.18"
 zip = "2"
 clap = { version = "4", features = ["derive"] }
+anyhow = "1.0.104"
