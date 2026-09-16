@@ -18,6 +18,10 @@ struct Args {
     /// Directory to mount the archive on (must exist and be empty)
     mountpoint: PathBuf,
 
+    /// Open mount point in default file manager
+    #[arg(short, long)]
+    open: bool,
+
     /// Silence all output
     #[arg(short, long)]
     quiet: bool,
@@ -67,6 +71,10 @@ fn main() -> anyhow::Result<()> {
         MountOption::Subtype("zipfs".to_string()),
         MountOption::AutoUnmount,
     ];
+
+    if args.open {
+        open::that(&args.mountpoint)?;
+    }
 
     fuser::mount(fs, &args.mountpoint, &config)?;
 
