@@ -1,13 +1,9 @@
 [package]
-name = "fused-rarchive"
+name = "zipfs"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-anyhow = "1.0.104"
-clap = { version = "4.6.7", features = ["derive"] }
-fuser = "0.18.0"
-log = "0.4.34"
-stderrlog = "0.6.0"
-tempfile = "3.27.0"
-zip = "8.6.0"
+fuser = "0.18"
+zip = "2"
+clap = { version = "4", features = ["derive"] }
