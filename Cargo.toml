@@ -1,10 +1,12 @@
 [package]
 name = "zipfs"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 fuser = "0.18"
 zip = "2"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1.0.104"
+stderrlog = "0.6.0"
+log = "0.4.34"

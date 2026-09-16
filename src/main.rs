@@ -1,6 +1,7 @@
 use anyhow::bail;
 use clap::Parser;
 use fuser::{Config, MountOption};
+use log::{Level, info};
 use std::path::PathBuf;
 mod zip_fs;
 
@@ -16,10 +17,32 @@ struct Args {
 
     /// Directory to mount the archive on (must exist and be empty)
     mountpoint: PathBuf,
+
+    /// Silence all output
+    #[arg(short, long)]
+    quiet: bool,
+
+    /// Increase the verbosity of output
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    let mut level = Level::Info;
+
+    for _ in 0..args.verbose {
+        level = level.increment_severity();
+    }
+
+    stderrlog::new()
+        .module(module_path!())
+        .quiet(args.quiet)
+        .verbosity(level)
+        // .timestamp(ts)
+        .init()
+        .unwrap();
 
     if !args.archive.exists() {
         bail!("Archive {} does not exist", args.archive.display());
@@ -31,8 +54,8 @@ fn main() -> anyhow::Result<()> {
 
     let fs = zip_fs::ZipFs::new(&args.archive)?;
 
-    println!(
-        "zipfs: mounting {} at {} (Ctrl+C or fusermount -u to unmount)",
+    info!(
+        "zipfs: mounting {} at {}",
         args.archive.display(),
         args.mountpoint.display()
     );
@@ -42,7 +65,6 @@ fn main() -> anyhow::Result<()> {
     config.mount_options = vec![
         MountOption::FSName("zipfs".to_string()),
         MountOption::Subtype("zipfs".to_string()),
-        // MountOption::ReadOnly,
         MountOption::AutoUnmount,
     ];
 
