@@ -230,7 +230,7 @@ fn make_attr(uid: u32, gid: u32, node: &Node) -> FileAttr {
     FileAttr {
         ino: INodeNo(node.ino),
         size: node.size,
-        blocks: (node.size + BLOCK_SIZE - 1) / BLOCK_SIZE,
+        blocks: node.size.div_ceil(BLOCK_SIZE),
         atime: node.mtime,
         mtime: node.mtime,
         ctime: node.mtime,
@@ -241,7 +241,7 @@ fn make_attr(uid: u32, gid: u32, node: &Node) -> FileAttr {
         uid,
         gid,
         rdev: 0,
-        blksize: 512,
+        blksize: BLOCK_SIZE as u32,
         flags: 0,
     }
 }
@@ -385,7 +385,7 @@ impl Filesystem for ZipFs {
 
     fn statfs(&self, _req: &Request, _ino: INodeNo, reply: ReplyStatfs) {
         let total_size: u64 = self.nodes.values().map(|n| n.size).sum();
-        let blocks = (total_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        let blocks = total_size.div_ceil(BLOCK_SIZE);
         let files = self.nodes.len() as u64;
         reply.statfs(blocks, blocks, blocks, files, files, 512, 255, 512);
     }
