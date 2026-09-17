@@ -3,6 +3,8 @@ use fuser::{
     OpenAccMode, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen,
     ReplyStatfs, Request,
 };
+use human_bytes::human_bytes;
+use mini_moka::sync::Cache;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::File;
@@ -15,6 +17,8 @@ use zip::ZipArchive;
 const TTL: Duration = Duration::from_secs(1);
 const ROOT_INO: u64 = 1;
 const BLOCK_SIZE: u64 = 512;
+const DEFAULT_MAX_CACHE_SIZE: u64 = 32 * 1024 * 1024;
+const DEFAULT_CACHE_PERIOD: Duration = Duration::from_secs(30);
 
 /// In-memory directory entry.
 #[derive(Clone)]
@@ -34,7 +38,7 @@ pub struct ZipFs {
     nodes: HashMap<u64, Node>,
     archive: Mutex<ZipArchive<File>>,
     /// Lazily populated, decompressed file contents, keyed by inode.
-    cache: Mutex<HashMap<u64, Arc<Vec<u8>>>>,
+    cache: Mutex<Cache<u64, Arc<Vec<u8>>>>,
 }
 
 struct EntryInfo {
@@ -46,7 +50,11 @@ struct EntryInfo {
 }
 
 impl ZipFs {
-    pub fn new(archive_path: &PathBuf) -> anyhow::Result<Self> {
+    pub fn with_cache_size_and_time_to_live(
+        archive_path: &PathBuf,
+        cache_size: u64,
+        ttl: Duration,
+    ) -> anyhow::Result<Self> {
         let file = File::open(archive_path)?;
         let mut archive = ZipArchive::new(file)?;
 
@@ -94,11 +102,27 @@ impl ZipFs {
             insert_entry(&mut nodes, &mut next_ino, info);
         }
 
+        let cache: Cache<u64, Arc<Vec<u8>>> = Cache::builder()
+            .max_capacity(cache_size)
+            .weigher(|_key, value: &Arc<Vec<u8>>| -> u32 {
+                value.len().try_into().unwrap_or(u32::MAX)
+            })
+            .time_to_idle(ttl)
+            .build();
+
         Ok(ZipFs {
             nodes,
             archive: Mutex::new(archive),
-            cache: Mutex::new(HashMap::new()),
+            cache: Mutex::new(cache),
         })
+    }
+
+    pub fn new(archive_path: &PathBuf) -> anyhow::Result<Self> {
+        Self::with_cache_size_and_time_to_live(
+            archive_path,
+            DEFAULT_MAX_CACHE_SIZE,
+            DEFAULT_CACHE_PERIOD,
+        )
     }
 
     /// Lazily decompresses (once) and returns the full contents of a file.
@@ -347,6 +371,17 @@ impl Filesystem for ZipFs {
         _lock_owner: Option<fuser::LockOwner>,
         reply: ReplyData,
     ) {
+        let cache_size_used = { self.cache.lock().map_or(0, |cache| cache.weighted_size()) };
+        let cache_size_readable = human_bytes(cache_size_used as f64);
+        let percentage_used = (cache_size_used * 100) / DEFAULT_MAX_CACHE_SIZE;
+        log::trace!(
+            "Cache size: {} ({}) out of {} ({}) ({}%)",
+            cache_size_used,
+            cache_size_readable,
+            DEFAULT_MAX_CACHE_SIZE,
+            human_bytes(DEFAULT_MAX_CACHE_SIZE as f64),
+            percentage_used
+        );
         let file_index = match self.nodes.get(&ino.0) {
             Some(node) if matches!(node.kind, FileType::Directory) => {
                 reply.error(Errno::EISDIR);

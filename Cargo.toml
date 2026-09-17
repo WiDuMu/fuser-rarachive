@@ -10,4 +10,11 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1.0.104"
 stderrlog = "0.6.0"
 log = "0.4.34"
+mini-moka = "0.10"
 open = "5.4.4"
+human_bytes = "0.4.3"
+
+[profile.release]
+# opt-level = "z"               # Use slightly better optimizations.
+# strip = true
+lto = true
