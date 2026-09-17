@@ -3,7 +3,6 @@ use fuser::{
     OpenAccMode, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen,
     ReplyStatfs, Request,
 };
-use human_bytes::human_bytes;
 use mini_moka::sync::Cache;
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -17,7 +16,7 @@ use zip::ZipArchive;
 const TTL: Duration = Duration::from_secs(1);
 const ROOT_INO: u64 = 1;
 const BLOCK_SIZE: u64 = 512;
-const DEFAULT_MAX_CACHE_SIZE: u64 = 32 * 1024 * 1024;
+const DEFAULT_MAX_CACHE_SIZE: u64 = 64 * 1024 * 1024;
 const DEFAULT_CACHE_PERIOD: Duration = Duration::from_secs(30);
 
 /// In-memory directory entry.
@@ -371,17 +370,6 @@ impl Filesystem for ZipFs {
         _lock_owner: Option<fuser::LockOwner>,
         reply: ReplyData,
     ) {
-        let cache_size_used = { self.cache.lock().map_or(0, |cache| cache.weighted_size()) };
-        let cache_size_readable = human_bytes(cache_size_used as f64);
-        let percentage_used = (cache_size_used * 100) / DEFAULT_MAX_CACHE_SIZE;
-        log::trace!(
-            "Cache size: {} ({}) out of {} ({}) ({}%)",
-            cache_size_used,
-            cache_size_readable,
-            DEFAULT_MAX_CACHE_SIZE,
-            human_bytes(DEFAULT_MAX_CACHE_SIZE as f64),
-            percentage_used
-        );
         let file_index = match self.nodes.get(&ino.0) {
             Some(node) if matches!(node.kind, FileType::Directory) => {
                 reply.error(Errno::EISDIR);
