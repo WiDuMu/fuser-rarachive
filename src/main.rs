@@ -18,6 +18,10 @@ struct Args {
     /// Directory to mount the archive on (must exist and be empty)
     mountpoint: PathBuf,
 
+    #[arg(short, long)]
+    /// Password to use to decrypt the archive.
+    password: Option<String>,
+
     /// Open mount point in default file manager
     #[arg(short, long)]
     open: bool,
@@ -56,7 +60,7 @@ fn main() -> anyhow::Result<()> {
         bail!("Invalid mountpoint {}", args.mountpoint.display());
     }
 
-    let fs = zip_fs::ZipFs::new(&args.archive)?;
+    let fs = zip_fs::ZipFs::with_password(&args.archive, args.password)?;
 
     info!(
         "zipfs: mounting {} at {}",

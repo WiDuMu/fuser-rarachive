@@ -1,8 +1,10 @@
+use anyhow::Result;
 use fuser::{
     Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo,
     OpenAccMode, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen,
     ReplyStatfs, Request,
 };
+use log::trace;
 use mini_moka::sync::Cache;
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -38,6 +40,7 @@ pub struct ZipFs {
     archive: Mutex<ZipArchive<File>>,
     /// Lazily populated, decompressed file contents, keyed by inode.
     cache: Mutex<Cache<u64, Arc<Vec<u8>>>>,
+    password: Mutex<Option<String>>,
 }
 
 struct EntryInfo {
@@ -49,11 +52,16 @@ struct EntryInfo {
 }
 
 impl ZipFs {
-    pub fn with_cache_size_and_time_to_live(
+    pub fn with_cache_size_password_and_time_to_live(
         archive_path: &PathBuf,
         cache_size: u64,
         ttl: Duration,
+        password: Option<String>,
     ) -> anyhow::Result<Self> {
+        trace!(
+            "Opening archive {:?} with password {:?} and cache_size {}",
+            archive_path, password, cache_size
+        );
         let file = File::open(archive_path)?;
         let mut archive = ZipArchive::new(file)?;
 
@@ -62,7 +70,11 @@ impl ZipFs {
         let mut infos: Vec<EntryInfo> = Vec::with_capacity(archive.len());
         for index in 0..archive.len() {
             let info = {
-                let entry = archive.by_index(index)?;
+                let entry = if let Some(pass) = &password {
+                    archive.by_index_decrypt(index, pass.as_bytes())
+                } else {
+                    archive.by_index(index)
+                }?;
                 let path = entry.name().trim_start_matches("./").to_string();
                 if path.is_empty() {
                     continue;
@@ -113,7 +125,25 @@ impl ZipFs {
             nodes,
             archive: Mutex::new(archive),
             cache: Mutex::new(cache),
+            password: Mutex::new(password),
         })
+    }
+
+    pub fn with_cache_size_and_time_to_live(
+        archive_path: &PathBuf,
+        cache_size: u64,
+        ttl: Duration,
+    ) -> anyhow::Result<Self> {
+        Self::with_cache_size_password_and_time_to_live(archive_path, cache_size, ttl, None)
+    }
+
+    pub fn with_password(archive_path: &PathBuf, password: Option<String>) -> anyhow::Result<Self> {
+        Self::with_cache_size_password_and_time_to_live(
+            archive_path,
+            DEFAULT_MAX_CACHE_SIZE,
+            DEFAULT_CACHE_PERIOD,
+            password,
+        )
     }
 
     pub fn new(archive_path: &PathBuf) -> anyhow::Result<Self> {
@@ -124,8 +154,16 @@ impl ZipFs {
         )
     }
 
+    pub fn set_password(&self, password: &str) {
+        *self.password.lock().unwrap() = Some(password.to_string());
+    }
+
+    pub fn clear_password(&self) {
+        *self.password.lock().unwrap() = None;
+    }
+
     /// Lazily decompresses (once) and returns the full contents of a file.
-    fn file_data(&self, ino: u64, file_index: usize) -> std::io::Result<Arc<Vec<u8>>> {
+    fn file_data(&self, ino: u64, file_index: usize) -> Result<Arc<Vec<u8>>> {
         {
             let cache = self.cache.lock().unwrap();
             if let Some(data) = cache.get(&ino) {
@@ -133,8 +171,20 @@ impl ZipFs {
             }
         }
         // Hold the archive lock only while decompressing.
-        let mut archive = self.archive.lock().unwrap();
-        let mut file = archive.by_index(file_index)?;
+        let mut archive = self
+            .archive
+            .lock()
+            .expect("Archive mutex poisoned during file acquisition.");
+        let mut file = if let Some(password) = &self
+            .password
+            .lock()
+            .expect("Password mutex poisoned during password check")
+            .as_ref()
+        {
+            archive.by_index_decrypt(file_index, password.as_bytes())
+        } else {
+            archive.by_index(file_index)
+        }?;
         let mut buf = Vec::with_capacity(file.size() as usize);
         file.read_to_end(&mut buf)?;
         let data = Arc::new(buf);
