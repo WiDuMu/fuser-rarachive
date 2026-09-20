@@ -12,7 +12,7 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use zip::ZipArchive;
 
@@ -41,7 +41,7 @@ pub struct ZipFs {
     archive: Mutex<ZipArchive<File>>,
     /// Lazily populated, decompressed file contents, keyed by inode.
     cache: Mutex<Cache<u64, Arc<Vec<u8>>>>,
-    password: Mutex<Option<String>>,
+    password: RwLock<Option<String>>,
 }
 
 struct EntryInfo {
@@ -126,7 +126,7 @@ impl ZipFs {
             nodes,
             archive: Mutex::new(archive),
             cache: Mutex::new(cache),
-            password: Mutex::new(password),
+            password: RwLock::new(password),
         })
     }
 
@@ -158,15 +158,15 @@ impl ZipFs {
     pub fn set_password(&self, password: &str) {
         *self
             .password
-            .lock()
-            .expect("Setting password: Mutex poisoned") = Some(password.to_string());
+            .write()
+            .expect("Setting password: Read-Write lock poisoned") = Some(password.to_string());
     }
 
     pub fn clear_password(&self) {
         *self
             .password
-            .lock()
-            .expect("Clearing password: Mutex poisoned") = None;
+            .write()
+            .expect("Clearing password: Read-Write lock poisoned") = None;
     }
 
     /// Lazily decompresses (once) and returns the full contents of a file.
@@ -177,7 +177,7 @@ impl ZipFs {
                 .lock()
                 .expect("Getting Cache lock: Mutex poisoned");
             if let Some(data) = cache.get(&ino) {
-                return Ok(data.clone());
+                return Ok(data);
             }
         }
         // Lock archive inside this so we release the lock when the reading is complete
@@ -189,7 +189,7 @@ impl ZipFs {
                 .expect("Archive mutex poisoned during file acquisition.");
             let mut file = if let Some(password) = &self
                 .password
-                .lock()
+                .read()
                 .expect("Password mutex poisoned during password check.")
                 .as_ref()
             {
