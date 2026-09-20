@@ -155,17 +155,26 @@ impl ZipFs {
     }
 
     pub fn set_password(&self, password: &str) {
-        *self.password.lock().unwrap() = Some(password.to_string());
+        *self
+            .password
+            .lock()
+            .expect("Setting password: Mutex poisoned") = Some(password.to_string());
     }
 
     pub fn clear_password(&self) {
-        *self.password.lock().unwrap() = None;
+        *self
+            .password
+            .lock()
+            .expect("Clearing password: Mutex poisoned") = None;
     }
 
     /// Lazily decompresses (once) and returns the full contents of a file.
     fn file_data(&self, ino: u64, file_index: usize) -> Result<Arc<Vec<u8>>> {
         {
-            let cache = self.cache.lock().unwrap();
+            let cache = self
+                .cache
+                .lock()
+                .expect("Getting Cache lock: Mutex poisoned");
             if let Some(data) = cache.get(&ino) {
                 return Ok(data.clone());
             }
@@ -178,7 +187,7 @@ impl ZipFs {
         let mut file = if let Some(password) = &self
             .password
             .lock()
-            .expect("Password mutex poisoned during password check")
+            .expect("Password mutex poisoned during password check.")
             .as_ref()
         {
             archive.by_index_decrypt(file_index, password.as_bytes())
@@ -188,7 +197,10 @@ impl ZipFs {
         let mut buf = Vec::with_capacity(file.size() as usize);
         file.read_to_end(&mut buf)?;
         let data = Arc::new(buf);
-        self.cache.lock().unwrap().insert(ino, data.clone());
+        self.cache
+            .lock()
+            .expect("Inserting file into cache: Mutex poisoned.")
+            .insert(ino, data.clone());
         Ok(data)
     }
 }
