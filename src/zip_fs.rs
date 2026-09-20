@@ -179,23 +179,27 @@ impl ZipFs {
                 return Ok(data.clone());
             }
         }
-        // Hold the archive lock only while decompressing.
-        let mut archive = self
-            .archive
-            .lock()
-            .expect("Archive mutex poisoned during file acquisition.");
-        let mut file = if let Some(password) = &self
-            .password
-            .lock()
-            .expect("Password mutex poisoned during password check.")
-            .as_ref()
-        {
-            archive.by_index_decrypt(file_index, password.as_bytes())
-        } else {
-            archive.by_index(file_index)
-        }?;
-        let mut buf = Vec::with_capacity(file.size() as usize);
-        file.read_to_end(&mut buf)?;
+        // Lock archive inside this so we release the lock when the reading is complete
+        let buf = {
+            // Hold the archive lock only while decompressing.
+            let mut archive = self
+                .archive
+                .lock()
+                .expect("Archive mutex poisoned during file acquisition.");
+            let mut file = if let Some(password) = &self
+                .password
+                .lock()
+                .expect("Password mutex poisoned during password check.")
+                .as_ref()
+            {
+                archive.by_index_decrypt(file_index, password.as_bytes())
+            } else {
+                archive.by_index(file_index)
+            }?;
+            let mut buf = Vec::with_capacity(file.size() as usize);
+            file.read_to_end(&mut buf)?;
+            buf
+        };
         let data = Arc::new(buf);
         self.cache
             .lock()
@@ -224,8 +228,7 @@ fn insert_entry(nodes: &mut HashMap<u64, Node>, next_ino: &mut u64, info: EntryI
     if let Some(leaf) = file_leaf {
         let parent_node = nodes.get_mut(&parent).expect("parent node must exist");
         if parent_node.children.contains_key(leaf) {
-            eprintln!("zipfs: skipping duplicate zip entry '{}'", info.path);
-            return;
+            return; // Skipping duplicate entry
         }
         let ino = *next_ino;
         *next_ino += 1;
