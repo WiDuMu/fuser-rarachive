@@ -3,7 +3,7 @@ use clap::Parser;
 use fuser::{Config, MountOption};
 use log::{Level, info};
 use std::path::PathBuf;
-mod zip_fs;
+use zipfs::ZipFs;
 
 #[derive(Parser)]
 #[command(
@@ -60,7 +60,7 @@ fn main() -> anyhow::Result<()> {
         bail!("Invalid mountpoint {}", args.mountpoint.display());
     }
 
-    let fs = zip_fs::ZipFs::with_password(&args.archive, args.password)?;
+    let fs = ZipFs::with_password(&args.archive, args.password)?;
 
     info!(
         "zipfs: mounting {} at {}",

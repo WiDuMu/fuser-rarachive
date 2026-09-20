@@ -1,3 +1,4 @@
+/// ZipFS library separate from the user interface.
 use anyhow::Result;
 use fuser::{
     Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo,
