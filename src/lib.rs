@@ -40,7 +40,7 @@ pub struct ZipFs {
     nodes: HashMap<u64, Node>,
     archive: Mutex<ZipArchive<File>>,
     /// Lazily populated, decompressed file contents, keyed by inode.
-    cache: Mutex<Cache<u64, Arc<Vec<u8>>>>,
+    cache: RwLock<Cache<u64, Arc<Vec<u8>>>>,
     password: RwLock<Option<String>>,
 }
 
@@ -125,7 +125,7 @@ impl ZipFs {
         Ok(ZipFs {
             nodes,
             archive: Mutex::new(archive),
-            cache: Mutex::new(cache),
+            cache: RwLock::new(cache),
             password: RwLock::new(password),
         })
     }
@@ -159,14 +159,14 @@ impl ZipFs {
         *self
             .password
             .write()
-            .expect("Setting password: Read-Write lock poisoned") = Some(password.to_string());
+            .expect("Setting password: read-write lock poisoned") = Some(password.to_string());
     }
 
     pub fn clear_password(&self) {
         *self
             .password
             .write()
-            .expect("Clearing password: Read-Write lock poisoned") = None;
+            .expect("Clearing password: read-write lock poisoned") = None;
     }
 
     /// Lazily decompresses (once) and returns the full contents of a file.
@@ -174,8 +174,8 @@ impl ZipFs {
         {
             let cache = self
                 .cache
-                .lock()
-                .expect("Getting Cache lock: Mutex poisoned");
+                .read()
+                .expect("Getting Cache lock: read-write lock poisoned");
             if let Some(data) = cache.get(&ino) {
                 return Ok(data);
             }
@@ -190,7 +190,7 @@ impl ZipFs {
             let mut file = if let Some(password) = &self
                 .password
                 .read()
-                .expect("Password mutex poisoned during password check.")
+                .expect("Password read-write lock poisoned during password check.")
                 .as_ref()
             {
                 archive.by_index_decrypt(file_index, password.as_bytes())
@@ -203,8 +203,8 @@ impl ZipFs {
         };
         let data = Arc::new(buf);
         self.cache
-            .lock()
-            .expect("Inserting file into cache: Mutex poisoned.")
+            .write()
+            .expect("Inserting file into cache: read-write lock poisoned.")
             .insert(ino, data.clone());
         Ok(data)
     }
