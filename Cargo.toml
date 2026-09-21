@@ -12,6 +12,7 @@ stderrlog = "0.6.0"
 log = "0.4.34"
 mini-moka = "0.10"
 open = "5.4.4"
+parse-size = "1.1.0"
 
 [profile.release]
 # opt-level = "z"               # Use slightly better optimizations.

@@ -138,6 +138,19 @@ impl ZipFs {
         Self::with_cache_size_password_and_time_to_live(archive_path, cache_size, ttl, None)
     }
 
+    pub fn with_password_and_cache_size(
+        archive_path: &Path,
+        password: Option<String>,
+        size: u64,
+    ) -> anyhow::Result<Self> {
+        Self::with_cache_size_password_and_time_to_live(
+            archive_path,
+            size,
+            DEFAULT_CACHE_PERIOD,
+            password,
+        )
+    }
+
     pub fn with_password(archive_path: &Path, password: Option<String>) -> anyhow::Result<Self> {
         Self::with_cache_size_password_and_time_to_live(
             archive_path,
