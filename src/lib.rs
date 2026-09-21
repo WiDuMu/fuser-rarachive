@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use zip::ZipArchive;
@@ -54,7 +54,7 @@ struct EntryInfo {
 
 impl ZipFs {
     pub fn with_cache_size_password_and_time_to_live(
-        archive_path: &PathBuf,
+        archive_path: &Path,
         cache_size: u64,
         ttl: Duration,
         password: Option<String>,
@@ -131,14 +131,14 @@ impl ZipFs {
     }
 
     pub fn with_cache_size_and_time_to_live(
-        archive_path: &PathBuf,
+        archive_path: &Path,
         cache_size: u64,
         ttl: Duration,
     ) -> anyhow::Result<Self> {
         Self::with_cache_size_password_and_time_to_live(archive_path, cache_size, ttl, None)
     }
 
-    pub fn with_password(archive_path: &PathBuf, password: Option<String>) -> anyhow::Result<Self> {
+    pub fn with_password(archive_path: &Path, password: Option<String>) -> anyhow::Result<Self> {
         Self::with_cache_size_password_and_time_to_live(
             archive_path,
             DEFAULT_MAX_CACHE_SIZE,
@@ -147,7 +147,7 @@ impl ZipFs {
         )
     }
 
-    pub fn new(archive_path: &PathBuf) -> anyhow::Result<Self> {
+    pub fn new(archive_path: &Path) -> anyhow::Result<Self> {
         Self::with_cache_size_and_time_to_live(
             archive_path,
             DEFAULT_MAX_CACHE_SIZE,
