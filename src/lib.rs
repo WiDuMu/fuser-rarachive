@@ -39,7 +39,7 @@ pub struct ZipFs {
     nodes: HashMap<u64, Node>,
     archive: Mutex<ZipArchive<File>>,
     /// Lazily populated, decompressed file contents, keyed by inode.
-    cache: RwLock<Cache<u64, Arc<Vec<u8>>>>,
+    cache: Cache<u64, Arc<Vec<u8>>>,
     password: RwLock<Option<String>>,
 }
 
@@ -128,7 +128,7 @@ impl ZipFs {
         Ok(ZipFs {
             nodes,
             archive: Mutex::new(archive),
-            cache: RwLock::new(cache),
+            cache: cache,
             password: RwLock::new(password),
         })
     }
@@ -185,17 +185,15 @@ impl ZipFs {
             .expect("Clearing password: read-write lock poisoned") = None;
     }
 
+    fn cached_file_data(&self, ino: u64, file_index: usize) -> Result<Arc<Vec<u8>>> {
+        Ok(self
+            .cache
+            .try_get_with(ino, || self.file_data(ino, file_index))
+            .map_err(|e| *e)?)
+    }
+
     /// Lazily decompresses (once) and returns the full contents of a file.
     fn file_data(&self, ino: u64, file_index: usize) -> Result<Arc<Vec<u8>>> {
-        {
-            let cache = self
-                .cache
-                .read()
-                .expect("Getting Cache lock: read-write lock poisoned");
-            if let Some(data) = cache.get(&ino) {
-                return Ok(data);
-            }
-        }
         // Lock archive inside this so we release the lock when the reading is complete
         let buf = {
             // Hold the archive lock only while decompressing.
