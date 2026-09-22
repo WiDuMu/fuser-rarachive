@@ -6,7 +6,7 @@ use fuser::{
     ReplyStatfs, Request,
 };
 use log::{error, trace};
-use mini_moka::sync::Cache;
+use moka::sync::Cache;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::File;
