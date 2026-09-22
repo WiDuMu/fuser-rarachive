@@ -1,6 +1,6 @@
 [package]
 name = "zipfs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
@@ -10,4 +10,11 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1.0.104"
 stderrlog = "0.6.0"
 log = "0.4.34"
+mini-moka = "0.10"
 open = "5.4.4"
+parse-size = "1.1.0"
+
+[profile.release]
+# opt-level = "z"               # Use slightly better optimizations.
+# strip = true
+lto = true

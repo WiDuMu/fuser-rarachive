@@ -1,27 +1,32 @@
+/// ZipFS library separate from the user interface.
+use anyhow::Result;
 use fuser::{
     Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo,
     OpenAccMode, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen,
     ReplyStatfs, Request,
 };
+use log::{error, trace};
+use mini_moka::sync::Cache;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use zip::ZipArchive;
 
 const TTL: Duration = Duration::from_secs(1);
 const ROOT_INO: u64 = 1;
 const BLOCK_SIZE: u64 = 512;
+const DEFAULT_MAX_CACHE_SIZE: u64 = 64 * 1024 * 1024;
+const DEFAULT_CACHE_PERIOD: Duration = Duration::from_secs(30);
 
 /// In-memory directory entry.
 #[derive(Clone)]
 struct Node {
     ino: u64,
     parent: u64,
-    // name: String,
     kind: FileType,
     size: u64,
     mtime: SystemTime,
@@ -34,7 +39,8 @@ pub struct ZipFs {
     nodes: HashMap<u64, Node>,
     archive: Mutex<ZipArchive<File>>,
     /// Lazily populated, decompressed file contents, keyed by inode.
-    cache: Mutex<HashMap<u64, Arc<Vec<u8>>>>,
+    cache: RwLock<Cache<u64, Arc<Vec<u8>>>>,
+    password: RwLock<Option<String>>,
 }
 
 struct EntryInfo {
@@ -46,7 +52,21 @@ struct EntryInfo {
 }
 
 impl ZipFs {
-    pub fn new(archive_path: &PathBuf) -> anyhow::Result<Self> {
+    pub fn with_cache_size_password_and_time_to_live(
+        archive_path: &Path,
+        cache_size: u64,
+        ttl: Duration,
+        password: Option<String>,
+    ) -> anyhow::Result<Self> {
+        let password_message = if password.is_some() {
+            "with"
+        } else {
+            "without"
+        };
+        trace!(
+            "Opening archive {:?} {} a password and cache_size {}",
+            archive_path, password_message, cache_size
+        );
         let file = File::open(archive_path)?;
         let mut archive = ZipArchive::new(file)?;
 
@@ -55,7 +75,11 @@ impl ZipFs {
         let mut infos: Vec<EntryInfo> = Vec::with_capacity(archive.len());
         for index in 0..archive.len() {
             let info = {
-                let entry = archive.by_index(index)?;
+                let entry = if let Some(pass) = &password {
+                    archive.by_index_decrypt(index, pass.as_bytes())
+                } else {
+                    archive.by_index(index)
+                }?;
                 let path = entry.name().trim_start_matches("./").to_string();
                 if path.is_empty() {
                     continue;
@@ -80,7 +104,6 @@ impl ZipFs {
             Node {
                 ino: ROOT_INO,
                 parent: ROOT_INO,
-                // name: String::new(),
                 kind: FileType::Directory,
                 size: 0,
                 mtime: SystemTime::now(),
@@ -94,28 +117,111 @@ impl ZipFs {
             insert_entry(&mut nodes, &mut next_ino, info);
         }
 
+        let cache: Cache<u64, Arc<Vec<u8>>> = Cache::builder()
+            .max_capacity(cache_size)
+            .weigher(|_key, value: &Arc<Vec<u8>>| -> u32 {
+                value.len().try_into().unwrap_or(u32::MAX)
+            })
+            .time_to_idle(ttl)
+            .build();
+
         Ok(ZipFs {
             nodes,
             archive: Mutex::new(archive),
-            cache: Mutex::new(HashMap::new()),
+            cache: RwLock::new(cache),
+            password: RwLock::new(password),
         })
     }
 
+    pub fn with_cache_size_and_time_to_live(
+        archive_path: &Path,
+        cache_size: u64,
+        ttl: Duration,
+    ) -> anyhow::Result<Self> {
+        Self::with_cache_size_password_and_time_to_live(archive_path, cache_size, ttl, None)
+    }
+
+    pub fn with_password_and_cache_size(
+        archive_path: &Path,
+        password: Option<String>,
+        size: u64,
+    ) -> anyhow::Result<Self> {
+        Self::with_cache_size_password_and_time_to_live(
+            archive_path,
+            size,
+            DEFAULT_CACHE_PERIOD,
+            password,
+        )
+    }
+
+    pub fn with_password(archive_path: &Path, password: Option<String>) -> anyhow::Result<Self> {
+        Self::with_cache_size_password_and_time_to_live(
+            archive_path,
+            DEFAULT_MAX_CACHE_SIZE,
+            DEFAULT_CACHE_PERIOD,
+            password,
+        )
+    }
+
+    pub fn new(archive_path: &Path) -> anyhow::Result<Self> {
+        Self::with_cache_size_and_time_to_live(
+            archive_path,
+            DEFAULT_MAX_CACHE_SIZE,
+            DEFAULT_CACHE_PERIOD,
+        )
+    }
+
+    pub fn set_password(&self, password: &str) {
+        *self
+            .password
+            .write()
+            .expect("Setting password: read-write lock poisoned") = Some(password.to_string());
+    }
+
+    pub fn clear_password(&self) {
+        *self
+            .password
+            .write()
+            .expect("Clearing password: read-write lock poisoned") = None;
+    }
+
     /// Lazily decompresses (once) and returns the full contents of a file.
-    fn file_data(&self, ino: u64, file_index: usize) -> std::io::Result<Arc<Vec<u8>>> {
+    fn file_data(&self, ino: u64, file_index: usize) -> Result<Arc<Vec<u8>>> {
         {
-            let cache = self.cache.lock().unwrap();
+            let cache = self
+                .cache
+                .read()
+                .expect("Getting Cache lock: read-write lock poisoned");
             if let Some(data) = cache.get(&ino) {
-                return Ok(data.clone());
+                return Ok(data);
             }
         }
-        // Hold the archive lock only while decompressing.
-        let mut archive = self.archive.lock().unwrap();
-        let mut file = archive.by_index(file_index)?;
-        let mut buf = Vec::with_capacity(file.size() as usize);
-        file.read_to_end(&mut buf)?;
+        // Lock archive inside this so we release the lock when the reading is complete
+        let buf = {
+            // Hold the archive lock only while decompressing.
+            let mut archive = self
+                .archive
+                .lock()
+                .expect("Archive mutex poisoned during file acquisition.");
+            let mut file = if let Some(password) = &self
+                .password
+                .read()
+                .expect("Password read-write lock poisoned during password check.")
+                .as_ref()
+            {
+                archive.by_index_decrypt(file_index, password.as_bytes())
+            } else {
+                archive.by_index(file_index)
+            }?;
+            let mut buf = Vec::with_capacity(file.size() as usize);
+            file.read_to_end(&mut buf)?;
+            buf
+        };
         let data = Arc::new(buf);
-        self.cache.lock().unwrap().insert(ino, data.clone());
+        self.cache
+            .write()
+            .expect("Inserting file into cache: read-write lock poisoned.")
+            .insert(ino, data.clone());
         Ok(data)
     }
 }
@@ -139,8 +245,7 @@ fn insert_entry(nodes: &mut HashMap<u64, Node>, next_ino: &mut u64, info: EntryI
     if let Some(leaf) = file_leaf {
         let parent_node = nodes.get_mut(&parent).expect("parent node must exist");
         if parent_node.children.contains_key(leaf) {
-            eprintln!("zipfs: skipping duplicate zip entry '{}'", info.path);
-            return;
+            return; // Skipping duplicate entry
         }
         let ino = *next_ino;
         *next_ino += 1;
@@ -185,7 +290,6 @@ fn ensure_dir_path(
                     Node {
                         ino,
                         parent: current,
-                        // name: (*part).to_string(),
                         kind: FileType::Directory,
                         size: 0,
                         mtime,
@@ -368,7 +472,7 @@ impl Filesystem for ZipFs {
         let data = match self.file_data(ino.0, file_index) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("zipfs: failed to read zip entry: {}", e);
+                error!("zipfs: failed to read zip entry: {}", e);
                 reply.error(Errno::EIO);
                 return;
             }

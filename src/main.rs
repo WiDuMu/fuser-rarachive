@@ -2,8 +2,11 @@ use anyhow::bail;
 use clap::Parser;
 use fuser::{Config, MountOption};
 use log::{Level, info};
+use parse_size::parse_size;
 use std::path::PathBuf;
-mod zip_fs;
+use zipfs::ZipFs;
+
+const DEFAULT_MAX_CACHE_SIZE: u64 = 64 * 1024 * 1024;
 
 #[derive(Parser)]
 #[command(
@@ -18,9 +21,17 @@ struct Args {
     /// Directory to mount the archive on (must exist and be empty)
     mountpoint: PathBuf,
 
+    #[arg(short, long)]
+    /// Password to use to decrypt the archive.
+    password: Option<String>,
+
     /// Open mount point in default file manager
     #[arg(short, long)]
     open: bool,
+
+    /// Maximum size of the in-memory cache, default is 64mb
+    #[arg(short, long, value_parser = |s: &str| parse_size(s).map_err(|e| e.to_string()), default_value_t = DEFAULT_MAX_CACHE_SIZE)]
+    cache_size: u64,
 
     /// Silence all output
     #[arg(short, long)]
@@ -56,7 +67,7 @@ fn main() -> anyhow::Result<()> {
         bail!("Invalid mountpoint {}", args.mountpoint.display());
     }
 
-    let fs = zip_fs::ZipFs::new(&args.archive)?;
+    let fs = ZipFs::with_password_and_cache_size(&args.archive, args.password, args.cache_size)?;
 
     info!(
         "zipfs: mounting {} at {}",
