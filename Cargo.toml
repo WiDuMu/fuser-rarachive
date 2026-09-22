@@ -15,6 +15,6 @@ open = "5.4.4"
 parse-size = "1.1.0"
 
 [profile.release]
-# opt-level = "z"               # Use slightly better optimizations.
-# strip = true
+opt-level = "z"               # Use slightly better optimizations.
+strip = true
 lto = true
