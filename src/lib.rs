@@ -5,7 +5,7 @@ use fuser::{
     OpenAccMode, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen,
     ReplyStatfs, Request,
 };
-use log::trace;
+use log::{error, trace};
 use mini_moka::sync::Cache;
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -27,7 +27,6 @@ const DEFAULT_CACHE_PERIOD: Duration = Duration::from_secs(30);
 struct Node {
     ino: u64,
     parent: u64,
-    // name: String,
     kind: FileType,
     size: u64,
     mtime: SystemTime,
@@ -59,9 +58,14 @@ impl ZipFs {
         ttl: Duration,
         password: Option<String>,
     ) -> anyhow::Result<Self> {
+        let password_message = if password.is_some() {
+            "with"
+        } else {
+            "without"
+        };
         trace!(
-            "Opening archive {:?} with password {:?} and cache_size {}",
-            archive_path, password, cache_size
+            "Opening archive {:?} {} a password and cache_size {}",
+            archive_path, password_message, cache_size
         );
         let file = File::open(archive_path)?;
         let mut archive = ZipArchive::new(file)?;
@@ -100,7 +104,6 @@ impl ZipFs {
             Node {
                 ino: ROOT_INO,
                 parent: ROOT_INO,
-                // name: String::new(),
                 kind: FileType::Directory,
                 size: 0,
                 mtime: SystemTime::now(),
@@ -287,7 +290,6 @@ fn ensure_dir_path(
                     Node {
                         ino,
                         parent: current,
-                        // name: (*part).to_string(),
                         kind: FileType::Directory,
                         size: 0,
                         mtime,
@@ -470,7 +472,7 @@ impl Filesystem for ZipFs {
         let data = match self.file_data(ino.0, file_index) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("zipfs: failed to read zip entry: {}", e);
+                error!("zipfs: failed to read zip entry: {}", e);
                 reply.error(Errno::EIO);
                 return;
             }
