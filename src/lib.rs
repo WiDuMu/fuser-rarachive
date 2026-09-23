@@ -6,7 +6,7 @@ use fuser::{
     ReplyStatfs, Request,
 };
 use log::{error, trace};
-use mini_moka::sync::Cache;
+use moka::sync::Cache;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::File;
@@ -39,7 +39,7 @@ pub struct ZipFs {
     nodes: HashMap<u64, Node>,
     archive: Mutex<ZipArchive<File>>,
     /// Lazily populated, decompressed file contents, keyed by inode.
-    cache: RwLock<Cache<u64, Arc<Vec<u8>>>>,
+    cache: Cache<u64, Arc<Vec<u8>>>,
     password: RwLock<Option<String>>,
 }
 
@@ -128,7 +128,7 @@ impl ZipFs {
         Ok(ZipFs {
             nodes,
             archive: Mutex::new(archive),
-            cache: RwLock::new(cache),
+            cache: cache,
             password: RwLock::new(password),
         })
     }
@@ -185,17 +185,15 @@ impl ZipFs {
             .expect("Clearing password: read-write lock poisoned") = None;
     }
 
+    fn cached_file_data(&self, ino: u64, file_index: usize) -> Result<Arc<Vec<u8>>> {
+        Ok(self
+            .cache
+            .try_get_with(ino, || self.file_data(file_index).map_err(Arc::new))
+            .map_err(|e| anyhow::anyhow!("{}", *e))?) // Horrific hack because anyhow doesn't support send + sync for it's errors
+    }
+
     /// Lazily decompresses (once) and returns the full contents of a file.
-    fn file_data(&self, ino: u64, file_index: usize) -> Result<Arc<Vec<u8>>> {
-        {
-            let cache = self
-                .cache
-                .read()
-                .expect("Getting Cache lock: read-write lock poisoned");
-            if let Some(data) = cache.get(&ino) {
-                return Ok(data);
-            }
-        }
+    fn file_data(&self, file_index: usize) -> Result<Arc<Vec<u8>>> {
         // Lock archive inside this so we release the lock when the reading is complete
         let buf = {
             // Hold the archive lock only while decompressing.
@@ -218,10 +216,6 @@ impl ZipFs {
             buf
         };
         let data = Arc::new(buf);
-        self.cache
-            .write()
-            .expect("Inserting file into cache: read-write lock poisoned.")
-            .insert(ino, data.clone());
         Ok(data)
     }
 }
@@ -469,7 +463,7 @@ impl Filesystem for ZipFs {
             }
         };
 
-        let data = match self.file_data(ino.0, file_index) {
+        let data = match self.cached_file_data(ino.0, file_index) {
             Ok(d) => d,
             Err(e) => {
                 error!("zipfs: failed to read zip entry: {}", e);
