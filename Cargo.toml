@@ -1,18 +1,9 @@
-[package]
-name = "zipfs"
-version = "0.2.0"
-edition = "2024"
-
-[dependencies]
-anyhow = "1.0.104"
-clap = { version = "4", features = ["derive"] }
-fuser = "0.18"
-log = "0.4.34"
-open = "5.4.4"
-parse-size = "1.1.0"
-moka = { version =  "0.12.16", features = ["sync"] }
-stderrlog = "0.6.0"
-zip = "2"
+[workspace]
+members = [
+    "zipfs",
+    "zipfs-cli",
+]
+resolver = "2"
 
 [profile.release]
 opt-level = "z"               # Use slightly better optimizations.

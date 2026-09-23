@@ -1381,14 +1381,24 @@ name = "zipfs"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "clap",
  "fuser",
  "log",
  "moka",
+ "zip",
+]
+
+[[package]]
+name = "zipfs-cli"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fuser",
+ "log",
  "open",
  "parse-size",
  "stderrlog",
- "zip",
+ "zipfs",
 ]
 
 [[package]]

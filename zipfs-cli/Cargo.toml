@@ -1,0 +1,14 @@
+[package]
+name = "zipfs-cli"
+version = "0.2.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+fuser = "0.18"
+clap = { version = "4", features = ["derive"] }
+stderrlog = "0.6.0"
+log = "0.4.34"
+open = "5.4.4"
+parse-size = "1.1.0"
+zipfs = { path = "../zipfs" }
